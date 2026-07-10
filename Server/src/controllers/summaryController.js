@@ -1,20 +1,27 @@
 const pdf_parser = require("pdf-parse");
 console.log(pdf_parser);
-const GetSummary = require("../services/summaryService");
+const createChunks = require("../services/chunkService");
+const { streamSummary, GetSummary } = require("../services/summaryService");
 
 const SummaryController = async (req, res) => {
   const buffer = req.file.buffer;
   try {
     const parsed = await pdf_parser(buffer);
-    const summary = await GetSummary(parsed.text);
-    if (!summary)
-      return res
-        .status(404)
-        .json({ ok: false, message: "summary did not created" });
+    const chunks = createChunks(parsed.text);
+    const summaries = await Promise.all(chunks.map(GetSummary));
+    const merged_Summary = summaries.join("\n\n");
+    const stream = await streamSummary(merged_Summary);
 
-    return res
-      .status(200)
-      .json({ ok: true, message: "summary created sucessfully", summary });
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Transfer-Encoding", "chunked");
+
+    for await (const event of stream) {
+      if (event.type === "response.output_text.delta") {
+        res.write(event.delta);
+      }
+    }
+
+    res.end();
   } catch (error) {
     console.error(error);
 
